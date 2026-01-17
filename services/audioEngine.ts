@@ -54,13 +54,15 @@ export class AudioEngine {
     // This creates the spinning effect
     if (id === 'sub') {
       // Use short ramp (16ms) to prevent audio cracks while staying smooth
+      // Intensity at 0.2 for subtle effect that won't distort
       const rampTime = this.context.currentTime + 0.016;
+      const intensity = 0.2;
       if (this.panner.positionX) {
-        this.panner.positionX.linearRampToValueAtTime(x * 0.5, rampTime);
-        this.panner.positionY.linearRampToValueAtTime(y * 0.5, rampTime);
-        this.panner.positionZ.linearRampToValueAtTime(z * 0.5, rampTime);
+        this.panner.positionX.linearRampToValueAtTime(x * intensity, rampTime);
+        this.panner.positionY.linearRampToValueAtTime(y * intensity, rampTime);
+        this.panner.positionZ.linearRampToValueAtTime(z * intensity, rampTime);
       } else {
-        this.panner.setPosition(x * 0.5, y * 0.5, z * 0.5);
+        this.panner.setPosition(x * intensity, y * intensity, z * intensity);
       }
     }
   }

@@ -20,11 +20,11 @@ const App: React.FC = () => {
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  
+
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1.0); 
-  const [rotationSpeed, setRotationSpeed] = useState(10.0); 
+  const [volume, setVolume] = useState(1.0);
+  const [rotationSpeed, setRotationSpeed] = useState(5.0);
   const [isDragging, setIsDragging] = useState(false);
 
   const audioEngineRef = useRef<AudioEngine | null>(null);
@@ -50,19 +50,19 @@ const App: React.FC = () => {
     if (!isOmniMode || !isPlaying) return;
 
     const elapsed = (Date.now() - startTimeRef.current) / 1000;
-    
+
     setBands(prevBands => {
       const updated = prevBands.map((band, idx) => {
-        const radius = 18; 
+        const radius = 18;
         const basePhase = elapsed * rotationSpeed;
-        const bandOffset = (idx * (Math.PI / 8)); 
-        
+        const bandOffset = (idx * (Math.PI / 8));
+
         const newX = Math.cos(basePhase + bandOffset) * radius;
         const newZ = Math.sin(basePhase + bandOffset) * radius;
         const newY = Math.sin(basePhase * 0.4) * 1.5;
 
         audioEngineRef.current?.updateBandPosition(band.id, newX, newY, newZ);
-        
+
         return { ...band, x: newX, y: newY, z: newZ };
       });
       return updated;
@@ -76,7 +76,7 @@ const App: React.FC = () => {
       const ctx = audioEngineRef.current.getContext();
       const elapsed = ctx.currentTime - audioContextStartTimeRef.current;
       const currentPos = playbackOffsetRef.current + elapsed;
-      
+
       if (currentPos >= duration) {
         setIsPlaying(false);
         setCurrentTime(duration);
@@ -120,13 +120,13 @@ const App: React.FC = () => {
     reader.onload = async (e) => {
       const arrayBuffer = e.target?.result as ArrayBuffer;
       const audioBuffer = await audioEngineRef.current!.getContext().decodeAudioData(arrayBuffer.slice(0));
-      
+
       audioBufferRef.current = audioBuffer;
       setDuration(audioBuffer.duration);
       setCurrentTime(0);
-      
+
       await startPlayback(0);
-      setIsOmniMode(true); 
+      setIsOmniMode(true);
 
       setIsAnalyzing(true);
       try {
@@ -186,7 +186,7 @@ const App: React.FC = () => {
   };
 
   const updatePosition = useCallback((id: string, x: number, y: number) => {
-    if (isOmniMode) return; 
+    if (isOmniMode) return;
     setBands(prev => {
       const updated = prev.map(b => b.id === id ? { ...b, x, y } : b);
       audioEngineRef.current?.updateBandPosition(id, x, y, 0);
@@ -207,7 +207,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#050505] text-white p-6 md:p-12 selection:bg-cyan-500/30 overflow-x-hidden">
       <div className="max-w-6xl mx-auto">
-        
+
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
           <div>
             <h1 className="text-6xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-br from-white via-white to-white/40 mb-2">
@@ -217,12 +217,12 @@ const App: React.FC = () => {
               Transparent 3D Audio • Multi-Speed Rotation
             </p>
           </div>
-          
+
           <div className="flex flex-wrap gap-4 items-center">
             {/* Volume Control */}
             <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-full px-5 py-2 backdrop-blur-xl">
               <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vol</span>
-              <input 
+              <input
                 type="range"
                 min="0"
                 max="1"
@@ -237,7 +237,7 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-full pl-5 pr-2 py-1.5 backdrop-blur-xl">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Speed</span>
-                <input 
+                <input
                   type="range"
                   min="0"
                   max="100"
@@ -252,11 +252,10 @@ const App: React.FC = () => {
                   <button
                     key={speed}
                     onClick={() => setRotationSpeed(speed)}
-                    className={`w-7 h-7 flex items-center justify-center rounded-full text-[9px] font-bold transition-all border ${
-                      rotationSpeed === speed 
-                        ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20' 
+                    className={`w-7 h-7 flex items-center justify-center rounded-full text-[9px] font-bold transition-all border ${rotationSpeed === speed
+                        ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20'
                         : 'bg-white/5 border-white/10 text-white/40 hover:text-white'
-                    }`}
+                      }`}
                   >
                     {speed}
                   </button>
@@ -264,34 +263,34 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <button 
+            <button
               onClick={() => setIsOmniMode(!isOmniMode)}
               className={`px-8 py-3.5 rounded-full font-black uppercase tracking-tighter text-xs transition-all border-2 ${isOmniMode ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20' : 'bg-white/5 border-white/10 text-white/60'}`}
             >
               {isOmniMode ? "Rotation Active" : "Enable 360 Rotation"}
             </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleFileUpload} 
-              accept="audio/*" 
-              className="hidden" 
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept="audio/*"
+              className="hidden"
             />
-            <button 
+            <button
               onClick={() => fileInputRef.current?.click()}
               className="px-8 py-3.5 bg-white text-black font-black uppercase tracking-tighter text-xs rounded-full hover:scale-105 transition-all shadow-xl shadow-white/5"
             >
               Upload MP3
             </button>
             {fileName && (
-              <button 
+              <button
                 onClick={togglePlay}
                 className={`w-12 h-12 flex items-center justify-center rounded-full border border-white/10 shadow-xl transition-all ${isPlaying ? 'bg-red-500 border-red-400' : 'bg-white text-black'}`}
               >
                 {isPlaying ? (
-                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd"/></svg>
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
                 ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/></svg>
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
                 )}
               </button>
             )}
@@ -304,7 +303,7 @@ const App: React.FC = () => {
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(duration)}</span>
             </div>
-            <input 
+            <input
               type="range"
               min="0"
               max={duration || 100}
@@ -356,9 +355,9 @@ const App: React.FC = () => {
                     </span>
                   </div>
                   <div className="h-0.5 bg-white/5 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full transition-all duration-75" 
-                      style={{ 
+                    <div
+                      className="h-full transition-all duration-75"
+                      style={{
                         width: '100%',
                         transform: `translateX(${(band.x * 2.5)}%)`,
                         backgroundColor: band.color,
@@ -372,9 +371,9 @@ const App: React.FC = () => {
           </div>
 
           <div className="lg:col-span-3">
-            <Stage3D 
-              bands={bands} 
-              onPositionChange={updatePosition} 
+            <Stage3D
+              bands={bands}
+              onPositionChange={updatePosition}
               isAnalyzing={isAnalyzing}
               analyser={analyser}
             />
@@ -392,7 +391,7 @@ const App: React.FC = () => {
         </footer>
 
       </div>
-      
+
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none -z-10 opacity-30">
         <div className={`absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] rounded-full bg-cyan-900/10 blur-[150px] transition-all duration-[2000ms] ${isOmniMode ? 'scale-110 opacity-40' : 'scale-100 opacity-20'}`}></div>
       </div>
