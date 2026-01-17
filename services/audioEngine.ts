@@ -6,7 +6,7 @@ export class AudioEngine {
   private source: AudioBufferSourceNode | null = null;
   private analyzer: AnalyserNode;
   private masterVolume: GainNode;
-  private panner: PannerNode;
+  private stereoPanner: StereoPannerNode;
   private bandPositions: Map<string, { x: number; y: number; z: number }> = new Map();
 
   constructor() {
@@ -17,25 +17,17 @@ export class AudioEngine {
     this.masterVolume = this.context.createGain();
     this.masterVolume.gain.value = 1.0;
 
-    // Single panner for 3D spatial effect
-    this.panner = this.context.createPanner();
-    this.panner.panningModel = 'equalpower'; // Less aggressive than HRTF, cleaner sound
-    this.panner.distanceModel = 'inverse';
-    this.panner.refDistance = 1;
-    this.panner.maxDistance = 100;
-    this.panner.rolloffFactor = 0.1; // Very gentle rolloff to avoid volume changes
-    this.panner.coneInnerAngle = 360;
-    this.panner.coneOuterAngle = 360;
-    this.panner.coneOuterGain = 1;
+    // Simple stereo panner for clean left-right movement
+    this.stereoPanner = this.context.createStereoPanner();
+    this.stereoPanner.pan.value = 0;
 
-    // Audio path: source -> panner -> volume -> analyzer -> output
-    this.panner.connect(this.masterVolume);
+    // Audio path: source -> stereoPanner -> volume -> analyzer -> output
+    this.stereoPanner.connect(this.masterVolume);
     this.masterVolume.connect(this.analyzer);
     this.analyzer.connect(this.context.destination);
   }
 
   public setupBands(config: SpatialBand[]) {
-    // Store band positions for visualization
     config.forEach(band => {
       this.bandPositions.set(band.id, { x: band.x, y: band.y, z: band.z });
     });
@@ -47,23 +39,17 @@ export class AudioEngine {
   }
 
   public updateBandPosition(id: string, x: number, y: number, z: number) {
-    // Store position for visualization
     this.bandPositions.set(id, { x, y, z });
 
-    // Move the single panner based on the first band (sub/kick) position
-    // This creates the spinning effect
+    // Use the x position to control stereo panning (left-right)
     if (id === 'sub') {
-      // Use short ramp (16ms) to prevent audio cracks while staying smooth
-      // Intensity at 0.2 for subtle effect that won't distort
-      const rampTime = this.context.currentTime + 0.016;
-      const intensity = 0.2;
-      if (this.panner.positionX) {
-        this.panner.positionX.linearRampToValueAtTime(x * intensity, rampTime);
-        this.panner.positionY.linearRampToValueAtTime(y * intensity, rampTime);
-        this.panner.positionZ.linearRampToValueAtTime(z * intensity, rampTime);
-      } else {
-        this.panner.setPosition(x * intensity, y * intensity, z * intensity);
-      }
+      // Normalize x to -1 to 1 range for stereo pan
+      // x ranges roughly from -18 to 18, so divide by 18
+      const panValue = Math.max(-1, Math.min(1, x / 18));
+
+      // Smooth transition
+      const rampTime = this.context.currentTime + 0.05;
+      this.stereoPanner.pan.linearRampToValueAtTime(panValue, rampTime);
     }
   }
 
@@ -79,8 +65,7 @@ export class AudioEngine {
     this.source = this.context.createBufferSource();
     this.source.buffer = buffer;
 
-    // Connect through the panner for spatial effect
-    this.source.connect(this.panner);
+    this.source.connect(this.stereoPanner);
 
     this.source.start(0, offset);
     return this.context.currentTime;
