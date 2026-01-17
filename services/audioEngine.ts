@@ -1,5 +1,5 @@
 
-import { Howl } from 'howler';
+import { Howl, Howler } from 'howler';
 import { SpatialBand } from "../types";
 
 export class AudioEngine {
@@ -35,26 +35,22 @@ export class AudioEngine {
   public updateBandPosition(id: string, x: number, y: number, z: number) {
     this.bandPositions.set(id, { x, y, z });
 
-    // Throttle stereo updates
+    // Throttle spatial updates for smooth audio
     if (id === 'sub' && this.howl && this.soundId !== undefined) {
       const now = Date.now();
-      if (now - this.lastPanUpdate < 50) return;
+      if (now - this.lastPanUpdate < 33) return; // ~30fps for audio updates
       this.lastPanUpdate = now;
 
-      // Normalize x to -1 to 1 range for stereo
-      const stereoValue = Math.max(-1, Math.min(1, x / 18));
-      this.howl.stereo(stereoValue, this.soundId);
+      // Scale the position for spatial effect (smaller = more subtle)
+      const scale = 0.5;
+      this.howl.pos(x * scale, y * scale, z * scale, this.soundId);
     }
   }
 
   public async playBuffer(buffer: AudioBuffer, offset: number = 0): Promise<number> {
-    // Howler needs a URL, so we'll convert the buffer to a blob URL
-    // This method is called with an AudioBuffer, but we need to adapt for Howler
-
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
-
     return this.context.currentTime;
   }
 
@@ -62,6 +58,7 @@ export class AudioEngine {
     // Stop any existing playback
     if (this.howl) {
       this.howl.unload();
+      this.sourceNode = null;
     }
 
     const url = URL.createObjectURL(file);
@@ -69,7 +66,7 @@ export class AudioEngine {
     return new Promise((resolve) => {
       this.howl = new Howl({
         src: [url],
-        html5: true, // Use HTML5 Audio for large files
+        html5: false, // Use Web Audio for spatial support
         volume: this.currentVolume,
         onload: () => {
           if (onLoad && this.howl) {
@@ -77,16 +74,16 @@ export class AudioEngine {
           }
 
           // Connect to analyzer for visualization
-          if (this.howl) {
-            const audioElement = (this.howl as any)._sounds[0]._node as HTMLAudioElement;
-            if (audioElement && !this.sourceNode) {
-              try {
-                this.sourceNode = this.context.createMediaElementSource(audioElement);
-                this.sourceNode.connect(this.analyzer);
-              } catch (e) {
-                // Already connected
-              }
+          try {
+            const ctx = Howler.ctx;
+            if (ctx && Howler.masterGain) {
+              // Create a splitter to tap into the audio for visualization
+              const splitter = ctx.createGain();
+              Howler.masterGain.connect(splitter);
+              splitter.connect(this.analyzer);
             }
+          } catch (e) {
+            console.log('Could not connect analyzer:', e);
           }
 
           resolve();
@@ -99,6 +96,10 @@ export class AudioEngine {
       });
 
       this.soundId = this.howl.play();
+
+      // Set up 3D spatial audio with listener at origin
+      Howler.pos(0, 0, 0);
+      Howler.orientation(0, 0, -1, 0, 1, 0);
     });
   }
 
@@ -128,7 +129,8 @@ export class AudioEngine {
 
   public getCurrentTime(): number {
     if (this.howl && this.soundId !== undefined) {
-      return this.howl.seek(undefined, this.soundId) as number || 0;
+      const time = this.howl.seek(this.soundId);
+      return typeof time === 'number' ? time : 0;
     }
     return 0;
   }
