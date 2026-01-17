@@ -53,11 +53,11 @@ export class AudioEngine {
     // Move the single panner based on the first band (sub/kick) position
     // This creates the spinning effect
     if (id === 'sub') {
-      const now = this.context.currentTime;
+      // Use immediate value assignment for smooth continuous motion
       if (this.panner.positionX) {
-        this.panner.positionX.setTargetAtTime(x * 0.5, now, 0.02);
-        this.panner.positionY.setTargetAtTime(y * 0.5, now, 0.02);
-        this.panner.positionZ.setTargetAtTime(z * 0.5, now, 0.02);
+        this.panner.positionX.value = x * 0.5;
+        this.panner.positionY.value = y * 0.5;
+        this.panner.positionZ.value = z * 0.5;
       } else {
         this.panner.setPosition(x * 0.5, y * 0.5, z * 0.5);
       }
