@@ -8,6 +8,8 @@ export class AudioEngine {
   private masterVolume: GainNode;
   private stereoPanner: StereoPannerNode;
   private bandPositions: Map<string, { x: number; y: number; z: number }> = new Map();
+  private lastPanUpdate: number = 0;
+  private targetPan: number = 0;
 
   constructor() {
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -43,13 +45,21 @@ export class AudioEngine {
 
     // Use the x position to control stereo panning (left-right)
     if (id === 'sub') {
+      // Throttle updates to max 20 times per second to prevent audio artifacts
+      const now = Date.now();
+      if (now - this.lastPanUpdate < 50) return; // Skip if less than 50ms since last update
+      this.lastPanUpdate = now;
+
       // Normalize x to -1 to 1 range for stereo pan
-      // x ranges roughly from -18 to 18, so divide by 18
       const panValue = Math.max(-1, Math.min(1, x / 18));
 
-      // Smooth transition
-      const rampTime = this.context.currentTime + 0.05;
-      this.stereoPanner.pan.linearRampToValueAtTime(panValue, rampTime);
+      // Only update if pan value changed significantly
+      if (Math.abs(panValue - this.targetPan) > 0.02) {
+        this.targetPan = panValue;
+        // Use longer ramp for smooth audio
+        const rampTime = this.context.currentTime + 0.1;
+        this.stereoPanner.pan.linearRampToValueAtTime(panValue, rampTime);
+      }
     }
   }
 
