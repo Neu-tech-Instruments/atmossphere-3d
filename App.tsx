@@ -1,4 +1,9 @@
 
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { SpatialBand, AIAnalysisResult } from './types';
+import { AudioEngine } from './services/audioEngine';
+import { analyzeAudioSnippet } from './services/geminiService';
+import Stage3D from './components/Stage3D';
 import { storageService } from './services/storageService';
 
 const INITIAL_BANDS: SpatialBand[] = [
