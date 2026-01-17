@@ -38,18 +38,18 @@ export class AudioEngine {
       // COMMERCIAL LOUDNESS BOOST
       // 3.5x boost allows us to compete with mastered tracks.
       // Combined with the Limiter, this crushes the dynamic range upwards (density).
-      this.makeupGain.gain.value = 3.5;
+      this.makeupGain.gain.value = 6.0; // Pushing extremely hard for commercial loudness
     }
 
     if (!this.masterLimiter) {
       this.masterLimiter = ctx.createDynamicsCompressor();
       // BRICKWALL LIMITER SETTINGS
-      // Threshold close to 0 to maximize headroom usage
-      this.masterLimiter.threshold.value = -1.0;
-      this.masterLimiter.knee.value = 0; // Hard knee for immediate limiting
-      this.masterLimiter.ratio.value = 40.0; // Infinite-like ratio (brickwall)
-      this.masterLimiter.attack.value = 0.001; // Instant attack
-      this.masterLimiter.release.value = 0.05; // Fast release to recover punch
+      // Threshold at -0.3 to prevent any clipping while maximizing volume
+      this.masterLimiter.threshold.value = -0.3;
+      this.masterLimiter.knee.value = 0;
+      this.masterLimiter.ratio.value = 20.0;
+      this.masterLimiter.attack.value = 0.003;
+      this.masterLimiter.release.value = 0.1;
     }
 
     // Connect the chain: HowlerMaster -> MakeupGain -> Limiter -> Destination
@@ -133,14 +133,13 @@ export class AudioEngine {
           this.setupMastering();
 
           // Optimize 3D Spatial Audio for maximum loudness
-          // The visual bands are at radius ~18. Default refDistance is 1.
-          // This caused massive volume drop (inverse square law).
-          // Setting refDistance > radius ensures virtually no distance attenuation, just panning.
+          // Disable distance attenuation (rolloffFactor = 0) so volume stays 100%
+          // regardless of distance, maintaining only the spatial panning effect.
           (Howler as any).pannerAttr({
             panningModel: 'HRTF',
-            refDistance: 25, // Distance where volume is 100%. Our bands are at 18.
-            rolloffFactor: 0.5, // Gentle falloff if things go further
-            distanceModel: 'inverse'
+            refDistance: 100,
+            rolloffFactor: 0,
+            distanceModel: 'linear'
           });
 
           // Connect to analyzer
