@@ -14,7 +14,9 @@ export class AudioEngine {
     this.analyzer.fftSize = 2048;
 
     this.masterVolume = this.context.createGain();
-    this.masterVolume.gain.value = 1.0;
+    // Start at 0.25 (1/4) because audio goes through 4 panners
+    // This ensures max volume = normal browser volume (no amplification/distortion)
+    this.masterVolume.gain.value = 0.25;
 
     this.masterVolume.connect(this.analyzer);
     this.analyzer.connect(this.context.destination);
@@ -39,7 +41,9 @@ export class AudioEngine {
 
   public setVolume(value: number) {
     const now = this.context.currentTime;
-    this.masterVolume.gain.setTargetAtTime(value, now, 0.05);
+    // Multiply by 0.25 to normalize for 4 panners
+    // Volume slider 0-1 maps to 0% to 100% of normal volume (no boost)
+    this.masterVolume.gain.setTargetAtTime(value * 0.25, now, 0.05);
   }
 
   public updateBandPosition(id: string, x: number, y: number, z: number) {
