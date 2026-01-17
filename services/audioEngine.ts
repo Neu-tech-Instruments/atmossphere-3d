@@ -77,13 +77,21 @@ export class AudioEngine {
           try {
             const ctx = Howler.ctx;
             if (ctx && Howler.masterGain) {
-              // Create a splitter to tap into the audio for visualization
               const splitter = ctx.createGain();
               Howler.masterGain.connect(splitter);
               splitter.connect(this.analyzer);
             }
           } catch (e) {
             console.log('Could not connect analyzer:', e);
+          }
+
+          // Set up 3D spatial audio with listener at origin
+          Howler.pos(0, 0, 0);
+          Howler.orientation(0, 0, -1, 0, 1, 0);
+
+          // Start playback after loading
+          if (this.howl) {
+            this.soundId = this.howl.play();
           }
 
           resolve();
@@ -94,12 +102,6 @@ export class AudioEngine {
           }
         }
       });
-
-      this.soundId = this.howl.play();
-
-      // Set up 3D spatial audio with listener at origin
-      Howler.pos(0, 0, 0);
-      Howler.orientation(0, 0, -1, 0, 1, 0);
     });
   }
 
