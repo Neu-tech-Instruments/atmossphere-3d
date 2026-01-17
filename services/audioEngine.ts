@@ -12,6 +12,9 @@ export class AudioEngine {
   private lastPanUpdate: number = 0;
   private soundId: number | undefined;
 
+  private makeupGain: GainNode | null = null;
+  private masterLimiter: DynamicsCompressorNode | null = null;
+
   constructor() {
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.analyzer = this.context.createAnalyser();
@@ -23,6 +26,48 @@ export class AudioEngine {
     config.forEach(band => {
       this.bandPositions.set(band.id, { x: band.x, y: band.y, z: band.z });
     });
+  }
+
+  private setupMastering() {
+    const ctx = Howler.ctx;
+    if (!ctx || !Howler.masterGain) return;
+
+    // Create mastering nodes if they don't exist
+    if (!this.makeupGain) {
+      this.makeupGain = ctx.createGain();
+      // COMMERCIAL LOUDNESS BOOST
+      // 3.5x boost allows us to compete with mastered tracks.
+      // Combined with the Limiter, this crushes the dynamic range upwards (density).
+      this.makeupGain.gain.value = 3.5;
+    }
+
+    if (!this.masterLimiter) {
+      this.masterLimiter = ctx.createDynamicsCompressor();
+      // BRICKWALL LIMITER SETTINGS
+      // Threshold close to 0 to maximize headroom usage
+      this.masterLimiter.threshold.value = -1.0;
+      this.masterLimiter.knee.value = 0; // Hard knee for immediate limiting
+      this.masterLimiter.ratio.value = 40.0; // Infinite-like ratio (brickwall)
+      this.masterLimiter.attack.value = 0.001; // Instant attack
+      this.masterLimiter.release.value = 0.05; // Fast release to recover punch
+    }
+
+    // Connect the chain: HowlerMaster -> MakeupGain -> Limiter -> Destination
+    try {
+      // First, disconnect Howler's default path to destination to avoid doubling
+      Howler.masterGain.disconnect(ctx.destination);
+    } catch (e) {
+      // Ignore if already disconnected
+    }
+
+    // Ensure we don't have duplicate connections if called multiple times
+    this.makeupGain.disconnect();
+    this.masterLimiter.disconnect();
+
+    // Re-establish the chain
+    Howler.masterGain.connect(this.makeupGain);
+    this.makeupGain.connect(this.masterLimiter);
+    this.masterLimiter.connect(ctx.destination);
   }
 
   public setVolume(value: number) {
@@ -84,6 +129,20 @@ export class AudioEngine {
             onLoad(this.howl.duration());
           }
 
+          // Apply mastering chain: Massive boost + Brickwall Limiter
+          this.setupMastering();
+
+          // Optimize 3D Spatial Audio for maximum loudness
+          // The visual bands are at radius ~18. Default refDistance is 1.
+          // This caused massive volume drop (inverse square law).
+          // Setting refDistance > radius ensures virtually no distance attenuation, just panning.
+          (Howler as any).pannerAttr({
+            panningModel: 'HRTF',
+            refDistance: 25, // Distance where volume is 100%. Our bands are at 18.
+            rolloffFactor: 0.5, // Gentle falloff if things go further
+            distanceModel: 'inverse'
+          });
+
           // Connect to analyzer
           try {
             const ctx = Howler.ctx;
@@ -96,7 +155,7 @@ export class AudioEngine {
             console.log('Could not connect analyzer:', e);
           }
 
-          // Set up 3D spatial audio
+          // Set up listener
           Howler.pos(0, 0, 0);
           Howler.orientation(0, 0, -1, 0, 1, 0);
         },
