@@ -6,6 +6,7 @@ export class AudioEngine {
   private source: AudioBufferSourceNode | null = null;
   private analyzer: AnalyserNode;
   private masterVolume: GainNode;
+  private panner: PannerNode;
   private bandPositions: Map<string, { x: number; y: number; z: number }> = new Map();
 
   constructor() {
@@ -16,13 +17,25 @@ export class AudioEngine {
     this.masterVolume = this.context.createGain();
     this.masterVolume.gain.value = 1.0;
 
-    // Clean audio path: source -> volume -> analyzer -> output
+    // Single panner for 3D spatial effect
+    this.panner = this.context.createPanner();
+    this.panner.panningModel = 'equalpower'; // Less aggressive than HRTF, cleaner sound
+    this.panner.distanceModel = 'inverse';
+    this.panner.refDistance = 1;
+    this.panner.maxDistance = 100;
+    this.panner.rolloffFactor = 0.1; // Very gentle rolloff to avoid volume changes
+    this.panner.coneInnerAngle = 360;
+    this.panner.coneOuterAngle = 360;
+    this.panner.coneOuterGain = 1;
+
+    // Audio path: source -> panner -> volume -> analyzer -> output
+    this.panner.connect(this.masterVolume);
     this.masterVolume.connect(this.analyzer);
     this.analyzer.connect(this.context.destination);
   }
 
   public setupBands(config: SpatialBand[]) {
-    // Store band positions for visualization (no audio processing)
+    // Store band positions for visualization
     config.forEach(band => {
       this.bandPositions.set(band.id, { x: band.x, y: band.y, z: band.z });
     });
@@ -30,13 +43,25 @@ export class AudioEngine {
 
   public setVolume(value: number) {
     const now = this.context.currentTime;
-    // Simple volume control: 0-1 maps to 0%-100% volume
     this.masterVolume.gain.setTargetAtTime(value, now, 0.05);
   }
 
   public updateBandPosition(id: string, x: number, y: number, z: number) {
-    // Store position for visualization only
+    // Store position for visualization
     this.bandPositions.set(id, { x, y, z });
+
+    // Move the single panner based on the first band (sub/kick) position
+    // This creates the spinning effect
+    if (id === 'sub') {
+      const now = this.context.currentTime;
+      if (this.panner.positionX) {
+        this.panner.positionX.setTargetAtTime(x * 0.5, now, 0.02);
+        this.panner.positionY.setTargetAtTime(y * 0.5, now, 0.02);
+        this.panner.positionZ.setTargetAtTime(z * 0.5, now, 0.02);
+      } else {
+        this.panner.setPosition(x * 0.5, y * 0.5, z * 0.5);
+      }
+    }
   }
 
   public async playBuffer(buffer: AudioBuffer, offset: number = 0) {
@@ -51,8 +76,8 @@ export class AudioEngine {
     this.source = this.context.createBufferSource();
     this.source.buffer = buffer;
 
-    // Direct connection: clean audio without spatial filtering
-    this.source.connect(this.masterVolume);
+    // Connect through the panner for spatial effect
+    this.source.connect(this.panner);
 
     this.source.start(0, offset);
     return this.context.currentTime;
