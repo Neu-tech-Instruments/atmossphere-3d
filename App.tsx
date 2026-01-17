@@ -1,9 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { SpatialBand, AIAnalysisResult } from './types';
-import { AudioEngine } from './services/audioEngine';
-import { analyzeAudioSnippet } from './services/geminiService';
-import Stage3D from './components/Stage3D';
+import { storageService } from './services/storageService';
 
 const INITIAL_BANDS: SpatialBand[] = [
   { id: 'sub', name: 'Low/Kick', frequency: 100, x: 0, y: 0, z: -16, color: '#06b6d4', gain: 1.0 },
@@ -37,9 +33,29 @@ const App: React.FC = () => {
   const playbackOffsetRef = useRef<number>(0);
 
   useEffect(() => {
+    // Initialize Audio Engine
     audioEngineRef.current = new AudioEngine();
     audioEngineRef.current.setupBands(INITIAL_BANDS);
     setAnalyser(audioEngineRef.current.getAnalyser());
+
+    // Check for stored file
+    const loadStoredFile = async () => {
+      try {
+        const file = await storageService.getAudioFile();
+        if (file) {
+          console.log("Found stored file:", file.name);
+          // We don't auto-play to avoid browser policy blocking, but we prepare it
+          // Or we can try to load it. The AudioEngine.loadAndPlay attempts to play.
+          // Let's load it. If autoplay fails, it's fine, user sees the UI.
+          await loadTrack(file, false); // false = don't force auto-save again
+        }
+      } catch (err) {
+        console.error("Failed to load stored file", err);
+      }
+    };
+
+    loadStoredFile();
+
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (progressRef.current) cancelAnimationFrame(progressRef.current);
@@ -108,9 +124,12 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !audioEngineRef.current) return;
+  const loadTrack = async (file: File, shouldSave: boolean = true) => {
+    if (!audioEngineRef.current) return;
+
+    if (shouldSave) {
+      storageService.saveAudioFile(file).catch(err => console.error("Failed to save file", err));
+    }
 
     setFileName(file.name);
 
@@ -134,15 +153,25 @@ const App: React.FC = () => {
     reader.readAsArrayBuffer(file);
 
     // Load and play with Howler
-    await audioEngineRef.current.loadAndPlay(file, (dur) => {
-      setDuration(dur);
-      setCurrentTime(0);
-    });
+    try {
+      await audioEngineRef.current.loadAndPlay(file, (dur) => {
+        setDuration(dur);
+        setCurrentTime(0);
+      });
 
-    setIsPlaying(true);
-    setIsOmniMode(true);
-    audioContextStartTimeRef.current = audioEngineRef.current.getContext().currentTime;
-    playbackOffsetRef.current = 0;
+      setIsPlaying(true);
+      setIsOmniMode(true);
+      audioContextStartTimeRef.current = audioEngineRef.current.getContext().currentTime;
+      playbackOffsetRef.current = 0;
+    } catch (error) {
+      console.error("Error loading audio:", error);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await loadTrack(file, true);
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
