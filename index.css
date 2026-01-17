@@ -1,0 +1,15 @@
+/* Global Styles */
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #050505;
+  color: #e5e5e5;
+  overflow: hidden;
+}
+
+.gradient-blur {
+  background: radial-gradient(circle at 50% 50%, rgba(124, 58, 237, 0.1) 0%, rgba(0, 0, 0, 0) 70%);
+}
+
+input[type="range"] {
+  accent-color: #7c3aed;
+}

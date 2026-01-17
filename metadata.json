@@ -1,0 +1,7 @@
+{
+  "name": "AtmosSphere 3D",
+  "description": "A premium spatial audio experience that uses AI to analyze your music and re-map it into a 3D immersive stage using HRTF spatialization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
