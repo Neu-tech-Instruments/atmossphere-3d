@@ -4,7 +4,7 @@ import { SpatialBand, AIAnalysisResult } from './types';
 import { AudioEngine } from './services/audioEngine';
 import { analyzeAudioSnippet } from './services/geminiService';
 import Stage3D from './components/Stage3D';
-import { storageService } from './services/storageService';
+import { storageService, StoredAudio } from './services/storageService';
 
 const INITIAL_BANDS: SpatialBand[] = [
   { id: 'sub', name: 'Low/Kick', frequency: 100, x: 0, y: 0, z: -16, color: '#06b6d4', gain: 1.0 },
@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [storedFiles, setStoredFiles] = useState<StoredAudio[]>([]);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -39,6 +40,15 @@ const App: React.FC = () => {
 
   const bandsRef = useRef<SpatialBand[]>(INITIAL_BANDS);
   const workerRef = useRef<Worker | null>(null);
+
+  const refreshLibrary = async () => {
+    try {
+      const files = await storageService.getAllAudioFiles();
+      setStoredFiles(files);
+    } catch (e) {
+      console.error("Failed to refresh library", e);
+    }
+  };
 
   useEffect(() => {
     // Initialize Audio Engine
@@ -62,20 +72,21 @@ const App: React.FC = () => {
     const blob = new Blob([workerScript], { type: 'application/javascript' });
     workerRef.current = new Worker(URL.createObjectURL(blob));
 
-    // Check for stored file
-    const loadStoredFile = async () => {
+    // Load stored files
+    const loadLibrary = async () => {
       try {
-        const file = await storageService.getAudioFile();
-        if (file) {
-          console.log("Found stored file:", file.name);
-          await loadTrack(file, false);
+        const files = await storageService.getAllAudioFiles();
+        setStoredFiles(files);
+        if (files.length > 0) {
+          console.log("Loading most recent track:", files[0].name);
+          await loadTrack(files[0].file, false);
         }
       } catch (err) {
-        console.error("Failed to load stored file", err);
+        console.error("Failed to load library", err);
       }
     };
 
-    loadStoredFile();
+    loadLibrary();
 
     return () => {
       workerRef.current?.terminate();
@@ -84,33 +95,23 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Physics Update: Runs on Worker Tick (Background Capable)
+  // Physics Update logic...
   const updatePhysics = useCallback(() => {
     if (!isOmniMode || !isPlaying) return;
-
     const elapsed = (Date.now() - startTimeRef.current) / 1000;
-
-    // Calculate new positions based on time
     const updated = bandsRef.current.map((band, idx) => {
       const radius = 18;
       const basePhase = elapsed * rotationSpeed;
       const bandOffset = (idx * (Math.PI / 8));
-
       const newX = Math.cos(basePhase + bandOffset) * radius;
       const newZ = Math.sin(basePhase + bandOffset) * radius;
       const newY = Math.sin(basePhase * 0.4) * 1.5;
-
-      // Update Audio Engine directly
       audioEngineRef.current?.updateBandPosition(band.id, newX, newY, newZ);
-
       return { ...band, x: newX, y: newY, z: newZ };
     });
-
-    // Update Source of Truth
     bandsRef.current = updated;
   }, [isOmniMode, isPlaying, rotationSpeed]);
 
-  // UI Update: Runs on Animation Frame (Visual only)
   const animateUI = useCallback(() => {
     if (isOmniMode && isPlaying) {
       setBands(bandsRef.current);
@@ -118,26 +119,19 @@ const App: React.FC = () => {
     }
   }, [isOmniMode, isPlaying]);
 
-  // Listen to worker ticks
   useEffect(() => {
     if (!workerRef.current) return;
-
     workerRef.current.onmessage = (e) => {
-      if (e.data === 'tick') {
-        updatePhysics();
-      }
+      if (e.data === 'tick') updatePhysics();
     };
   }, [updatePhysics]);
 
-  // Control Worker and UI Loop
   useEffect(() => {
     if (isOmniMode && isPlaying) {
-      // Start loops
-      startTimeRef.current = Date.now(); // Reset or sync time? Actually strictly tracking delta is better but this works for phase
+      startTimeRef.current = Date.now();
       workerRef.current?.postMessage('start');
       requestRef.current = requestAnimationFrame(animateUI);
     } else {
-      // Stop loops
       workerRef.current?.postMessage('stop');
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     }
@@ -156,7 +150,9 @@ const App: React.FC = () => {
     if (!audioEngineRef.current) return;
 
     if (shouldSave) {
-      storageService.saveAudioFile(file).catch(err => console.error("Failed to save file", err));
+      storageService.saveAudioFile(file)
+        .then(() => refreshLibrary())
+        .catch(err => console.error("Failed to save file", err));
     }
 
     setFileName(file.name);
@@ -202,6 +198,15 @@ const App: React.FC = () => {
     await loadTrack(file, true);
   };
 
+  const deleteTrack = async (e: React.MouseEvent, name: string) => {
+    e.stopPropagation();
+    if (window.confirm(`Delete ${name}?`)) {
+      await storageService.deleteAudioFile(name);
+      await refreshLibrary();
+    }
+  };
+
+  // ... (Seek, volume, rotation handlers remain the same - omitting for brevity in replace block, but need to ensure context is right)
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
@@ -254,7 +259,6 @@ const App: React.FC = () => {
 
   const togglePlay = () => {
     if (!audioEngineRef.current) return;
-
     if (isPlaying) {
       audioEngineRef.current.pause();
       setIsPlaying(false);
@@ -268,7 +272,6 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#050505] text-white p-6 md:p-12 selection:bg-cyan-500/30 overflow-x-hidden">
       <div className="max-w-6xl mx-auto">
-
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
           <div>
             <h1 className="text-6xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-br from-white via-white to-white/40 mb-2">
@@ -278,81 +281,29 @@ const App: React.FC = () => {
               Transparent 3D Audio • Multi-Speed Rotation
             </p>
           </div>
-
           <div className="flex flex-wrap gap-4 items-center">
-            {/* Volume Control */}
+            {/* ... Header Controls ... */}
             <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-full px-5 py-2 backdrop-blur-xl">
               <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Vol</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={handleVolumeChange}
-                className="w-20 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-white"
-              />
+              <input type="range" min="0" max="1" step="0.01" value={volume} onChange={handleVolumeChange} className="w-20 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-white" />
             </div>
-
-            {/* Rotation Control with 5 10 25 50 75 options */}
             <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-full pl-5 pr-2 py-1.5 backdrop-blur-xl">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Speed</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="0.5"
-                  value={rotationSpeed}
-                  onChange={handleRotationSpeedChange}
-                  className="w-20 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-                />
+                <input type="range" min="0" max="100" step="0.5" value={rotationSpeed} onChange={handleRotationSpeedChange} className="w-20 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
               </div>
               <div className="flex gap-1">
                 {[5, 10, 25, 50, 75].map((speed) => (
-                  <button
-                    key={speed}
-                    onClick={() => setRotationSpeed(speed)}
-                    className={`w-7 h-7 flex items-center justify-center rounded-full text-[9px] font-bold transition-all border ${rotationSpeed === speed
-                      ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20'
-                      : 'bg-white/5 border-white/10 text-white/40 hover:text-white'
-                      }`}
-                  >
-                    {speed}
-                  </button>
+                  <button key={speed} onClick={() => setRotationSpeed(speed)} className={`w-7 h-7 flex items-center justify-center rounded-full text-[9px] font-bold transition-all border ${rotationSpeed === speed ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20' : 'bg-white/5 border-white/10 text-white/40 hover:text-white'}`}>{speed}</button>
                 ))}
               </div>
             </div>
-
-            <button
-              onClick={() => setIsOmniMode(!isOmniMode)}
-              className={`px-8 py-3.5 rounded-full font-black uppercase tracking-tighter text-xs transition-all border-2 ${isOmniMode ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20' : 'bg-white/5 border-white/10 text-white/60'}`}
-            >
-              {isOmniMode ? "Rotation Active" : "Enable 360 Rotation"}
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept="audio/*"
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="px-8 py-3.5 bg-white text-black font-black uppercase tracking-tighter text-xs rounded-full hover:scale-105 transition-all shadow-xl shadow-white/5"
-            >
-              Upload MP3
-            </button>
+            <button onClick={() => setIsOmniMode(!isOmniMode)} className={`px-8 py-3.5 rounded-full font-black uppercase tracking-tighter text-xs transition-all border-2 ${isOmniMode ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20' : 'bg-white/5 border-white/10 text-white/60'}`}>{isOmniMode ? "Rotation Active" : "Enable 360 Rotation"}</button>
+            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*" className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()} className="px-8 py-3.5 bg-white text-black font-black uppercase tracking-tighter text-xs rounded-full hover:scale-105 transition-all shadow-xl shadow-white/5">Upload MP3</button>
             {fileName && (
-              <button
-                onClick={togglePlay}
-                className={`w-12 h-12 flex items-center justify-center rounded-full border border-white/10 shadow-xl transition-all ${isPlaying ? 'bg-red-500 border-red-400' : 'bg-white text-black'}`}
-              >
-                {isPlaying ? (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
-                )}
+              <button onClick={togglePlay} className={`w-12 h-12 flex items-center justify-center rounded-full border border-white/10 shadow-xl transition-all ${isPlaying ? 'bg-red-500 border-red-400' : 'bg-white text-black'}`}>
+                {isPlaying ? <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg> : <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>}
               </button>
             )}
           </div>
@@ -361,22 +312,9 @@ const App: React.FC = () => {
         {fileName && (
           <div className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-12 backdrop-blur-md">
             <div className="flex justify-between text-[10px] font-black text-white/20 mb-3 uppercase tracking-widest">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(duration)}</span>
+              <span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max={duration || 100}
-              step="0.1"
-              value={currentTime}
-              onChange={handleSeek}
-              onMouseDown={() => setIsDragging(true)}
-              onMouseUp={handleSeekEnd}
-              onTouchStart={() => setIsDragging(true)}
-              onTouchEnd={handleSeekEnd}
-              className="w-full h-1.5 bg-white/5 rounded-full appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-400 transition-all"
-            />
+            <input type="range" min="0" max={duration || 100} step="0.1" value={currentTime} onChange={handleSeek} onMouseDown={() => setIsDragging(true)} onMouseUp={handleSeekEnd} onTouchStart={() => setIsDragging(true)} onTouchEnd={handleSeekEnd} className="w-full h-1.5 bg-white/5 rounded-full appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-400 transition-all" />
           </div>
         )}
 
@@ -388,13 +326,30 @@ const App: React.FC = () => {
                 <p className="text-xl font-black truncate text-white">{fileName || "No file selected"}</p>
                 {analysis && (
                   <div className="flex flex-wrap gap-2 mt-4">
-                    <div className="px-2 py-1 bg-white/10 text-white/60 rounded text-[9px] border border-white/5 uppercase font-black tracking-widest">
-                      {analysis.genre}
-                    </div>
-                    <div className="px-2 py-1 bg-cyan-500/10 text-cyan-400 rounded text-[9px] border border-cyan-500/20 uppercase font-black tracking-widest">
-                      {analysis.mood}
-                    </div>
+                    <div className="px-2 py-1 bg-white/10 text-white/60 rounded text-[9px] border border-white/5 uppercase font-black tracking-widest">{analysis.genre}</div>
+                    <div className="px-2 py-1 bg-cyan-500/10 text-cyan-400 rounded text-[9px] border border-cyan-500/20 uppercase font-black tracking-widest">{analysis.mood}</div>
                   </div>
+                )}
+              </div>
+            </div>
+
+            {/* NEW: LIBRARY SECTION */}
+            <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl">
+              <h3 className="text-[10px] font-black text-white/40 uppercase mb-4 tracking-widest">Library</h3>
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                {storedFiles.map(f => (
+                  <div key={f.name} className={`group flex justify-between items-center p-3 rounded-lg border cursor-pointer transition-all ${fileName === f.name ? 'bg-cyan-500/10 border-cyan-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`} onClick={() => loadTrack(f.file, false)}>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-bold truncate ${fileName === f.name ? 'text-cyan-400' : 'text-white/70 group-hover:text-white'}`}>{f.name}</p>
+                      <p className="text-[9px] text-white/20 mt-0.5">{new Date(f.timestamp).toLocaleDateString()}</p>
+                    </div>
+                    <button onClick={(e) => deleteTrack(e, f.name)} className="w-6 h-6 flex items-center justify-center text-white/20 hover:text-red-400 transition-colors ml-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                  </div>
+                ))}
+                {storedFiles.length === 0 && (
+                  <div className="text-center py-4 text-white/20 text-xs italic">No tracks uploaded yet</div>
                 )}
               </div>
             </div>
@@ -416,15 +371,7 @@ const App: React.FC = () => {
                     </span>
                   </div>
                   <div className="h-0.5 bg-white/5 rounded-full overflow-hidden">
-                    <div
-                      className="h-full transition-all duration-75"
-                      style={{
-                        width: '100%',
-                        transform: `translateX(${(band.x * 2.5)}%)`,
-                        backgroundColor: band.color,
-                        opacity: 0.8
-                      }}
-                    ></div>
+                    <div className="h-full transition-all duration-75" style={{ width: '100%', transform: `translateX(${(band.x * 2.5)}%)`, backgroundColor: band.color, opacity: 0.8 }}></div>
                   </div>
                 </div>
               ))}
@@ -432,12 +379,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="lg:col-span-3">
-            <Stage3D
-              bands={bands}
-              onPositionChange={updatePosition}
-              isAnalyzing={isAnalyzing}
-              analyser={analyser}
-            />
+            <Stage3D bands={bands} onPositionChange={updatePosition} isAnalyzing={isAnalyzing} analyser={analyser} />
           </div>
         </div>
 

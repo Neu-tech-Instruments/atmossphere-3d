@@ -1,8 +1,14 @@
 
 const DB_NAME = 'AtmosSphereDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'audioFiles';
-const FILE_KEY = 'currentTrack';
+
+export interface StoredAudio {
+    file: File;
+    name: string;
+    type: string;
+    timestamp: number;
+}
 
 export const storageService = {
     async initDB(): Promise<IDBDatabase> {
@@ -20,9 +26,12 @@ export const storageService = {
 
             request.onupgradeneeded = (event) => {
                 const db = (event.target as IDBOpenDBRequest).result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    db.createObjectStore(STORE_NAME);
+                // Delete old store if strictly upgrading structure to ensure clean slate
+                if (db.objectStoreNames.contains(STORE_NAME)) {
+                    db.deleteObjectStore(STORE_NAME);
                 }
+                // Create new store with 'name' as the primary key
+                db.createObjectStore(STORE_NAME, { keyPath: 'name' });
             };
         });
     },
@@ -33,27 +42,26 @@ export const storageService = {
             const transaction = db.transaction([STORE_NAME], 'readwrite');
             const store = transaction.objectStore(STORE_NAME);
 
-            // Store the file and its name
-            const data = {
+            const data: StoredAudio = {
                 file: file,
                 name: file.name,
                 type: file.type,
                 timestamp: Date.now()
             };
 
-            const request = store.put(data, FILE_KEY);
+            const request = store.put(data); // keyPath is 'name', so no explicit key needed
 
             request.onsuccess = () => resolve();
             request.onerror = () => reject('Error saving file');
         });
     },
 
-    async getAudioFile(): Promise<File | null> {
+    async getAudioFile(name: string): Promise<File | null> {
         const db = await this.initDB();
         return new Promise((resolve, reject) => {
             const transaction = db.transaction([STORE_NAME], 'readonly');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(FILE_KEY);
+            const request = store.get(name);
 
             request.onsuccess = () => {
                 const result = request.result;
@@ -65,6 +73,35 @@ export const storageService = {
             };
 
             request.onerror = () => reject('Error retrieving file');
+        });
+    },
+
+    async getAllAudioFiles(): Promise<StoredAudio[]> {
+        const db = await this.initDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                // Sort by timestamp descending (newest first)
+                const results = (request.result as StoredAudio[]).sort((a, b) => b.timestamp - a.timestamp);
+                resolve(results);
+            };
+
+            request.onerror = () => reject('Error retrieving files');
+        });
+    },
+
+    async deleteAudioFile(name: string): Promise<void> {
+        const db = await this.initDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.delete(name);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject('Error deleting file');
         });
     }
 };
