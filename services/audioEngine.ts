@@ -35,13 +35,11 @@ export class AudioEngine {
   public updateBandPosition(id: string, x: number, y: number, z: number) {
     this.bandPositions.set(id, { x, y, z });
 
-    // Throttle spatial updates for smooth audio
     if (id === 'sub' && this.howl && this.soundId !== undefined) {
       const now = Date.now();
-      if (now - this.lastPanUpdate < 33) return; // ~30fps for audio updates
+      if (now - this.lastPanUpdate < 33) return;
       this.lastPanUpdate = now;
 
-      // Scale the position for spatial effect (smaller = more subtle)
       const scale = 0.5;
       this.howl.pos(x * scale, y * scale, z * scale, this.soundId);
     }
@@ -61,19 +59,32 @@ export class AudioEngine {
       this.sourceNode = null;
     }
 
+    // Unlock audio context first (required by browsers)
+    if (this.context.state === 'suspended') {
+      await this.context.resume();
+    }
+
+    // Also unlock Howler's context
+    if (Howler.ctx && Howler.ctx.state === 'suspended') {
+      await Howler.ctx.resume();
+    }
+
     const url = URL.createObjectURL(file);
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.howl = new Howl({
         src: [url],
-        html5: false, // Use Web Audio for spatial support
+        format: ['mp3', 'wav', 'ogg', 'm4a', 'webm'],
+        html5: false,
         volume: this.currentVolume,
+        autoplay: true, // Auto-play when loaded
         onload: () => {
+          console.log('Audio loaded successfully');
           if (onLoad && this.howl) {
             onLoad(this.howl.duration());
           }
 
-          // Connect to analyzer for visualization
+          // Connect to analyzer
           try {
             const ctx = Howler.ctx;
             if (ctx && Howler.masterGain) {
@@ -85,20 +96,26 @@ export class AudioEngine {
             console.log('Could not connect analyzer:', e);
           }
 
-          // Set up 3D spatial audio with listener at origin
+          // Set up 3D spatial audio
           Howler.pos(0, 0, 0);
           Howler.orientation(0, 0, -1, 0, 1, 0);
-
-          // Start playback after loading
-          if (this.howl) {
-            this.soundId = this.howl.play();
-          }
-
+        },
+        onplay: (id) => {
+          console.log('Audio playing, id:', id);
+          this.soundId = id;
           resolve();
         },
-        onplay: () => {
-          if (this.context.state === 'suspended') {
-            this.context.resume();
+        onloaderror: (id, error) => {
+          console.error('Load error:', error);
+          reject(error);
+        },
+        onplayerror: (id, error) => {
+          console.error('Play error:', error);
+          // Try to unlock and play again
+          if (Howler.ctx && Howler.ctx.state === 'suspended') {
+            Howler.ctx.resume().then(() => {
+              this.howl?.play();
+            });
           }
         }
       });
