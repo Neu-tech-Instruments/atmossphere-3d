@@ -32,11 +32,30 @@ const App: React.FC = () => {
   const audioContextStartTimeRef = useRef<number>(0);
   const playbackOffsetRef = useRef<number>(0);
 
+  const bandsRef = useRef<SpatialBand[]>(INITIAL_BANDS);
+  const workerRef = useRef<Worker | null>(null);
+
   useEffect(() => {
     // Initialize Audio Engine
     audioEngineRef.current = new AudioEngine();
     audioEngineRef.current.setupBands(INITIAL_BANDS);
     setAnalyser(audioEngineRef.current.getAnalyser());
+
+    // Create a Web Worker for background timing
+    const workerScript = `
+      let intervalId;
+      self.onmessage = function(e) {
+        if (e.data === 'start') {
+          if (intervalId) clearInterval(intervalId);
+          intervalId = setInterval(() => postMessage('tick'), 20); // 50fps
+        } else if (e.data === 'stop') {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      };
+    `;
+    const blob = new Blob([workerScript], { type: 'application/javascript' });
+    workerRef.current = new Worker(URL.createObjectURL(blob));
 
     // Check for stored file
     const loadStoredFile = async () => {
@@ -44,10 +63,7 @@ const App: React.FC = () => {
         const file = await storageService.getAudioFile();
         if (file) {
           console.log("Found stored file:", file.name);
-          // We don't auto-play to avoid browser policy blocking, but we prepare it
-          // Or we can try to load it. The AudioEngine.loadAndPlay attempts to play.
-          // Let's load it. If autoplay fails, it's fine, user sees the UI.
-          await loadTrack(file, false); // false = don't force auto-save again
+          await loadTrack(file, false);
         }
       } catch (err) {
         console.error("Failed to load stored file", err);
@@ -57,63 +73,70 @@ const App: React.FC = () => {
     loadStoredFile();
 
     return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      workerRef.current?.terminate();
       if (progressRef.current) cancelAnimationFrame(progressRef.current);
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
   }, []);
 
-  const animate = useCallback(() => {
+  // Physics Update: Runs on Worker Tick (Background Capable)
+  const updatePhysics = useCallback(() => {
     if (!isOmniMode || !isPlaying) return;
 
     const elapsed = (Date.now() - startTimeRef.current) / 1000;
 
-    setBands(prevBands => {
-      const updated = prevBands.map((band, idx) => {
-        const radius = 18;
-        const basePhase = elapsed * rotationSpeed;
-        const bandOffset = (idx * (Math.PI / 8));
+    // Calculate new positions based on time
+    const updated = bandsRef.current.map((band, idx) => {
+      const radius = 18;
+      const basePhase = elapsed * rotationSpeed;
+      const bandOffset = (idx * (Math.PI / 8));
 
-        const newX = Math.cos(basePhase + bandOffset) * radius;
-        const newZ = Math.sin(basePhase + bandOffset) * radius;
-        const newY = Math.sin(basePhase * 0.4) * 1.5;
+      const newX = Math.cos(basePhase + bandOffset) * radius;
+      const newZ = Math.sin(basePhase + bandOffset) * radius;
+      const newY = Math.sin(basePhase * 0.4) * 1.5;
 
-        audioEngineRef.current?.updateBandPosition(band.id, newX, newY, newZ);
+      // Update Audio Engine directly
+      audioEngineRef.current?.updateBandPosition(band.id, newX, newY, newZ);
 
-        return { ...band, x: newX, y: newY, z: newZ };
-      });
-      return updated;
+      return { ...band, x: newX, y: newY, z: newZ };
     });
 
-    requestRef.current = requestAnimationFrame(animate);
+    // Update Source of Truth
+    bandsRef.current = updated;
   }, [isOmniMode, isPlaying, rotationSpeed]);
 
-  const updateProgress = useCallback(() => {
-    if (isPlaying && !isDragging && audioEngineRef.current) {
-      const currentPos = audioEngineRef.current.getCurrentTime();
-
-      if (currentPos >= duration && duration > 0) {
-        setIsPlaying(false);
-        setCurrentTime(duration);
-      } else {
-        setCurrentTime(currentPos);
-      }
+  // UI Update: Runs on Animation Frame (Visual only)
+  const animateUI = useCallback(() => {
+    if (isOmniMode && isPlaying) {
+      setBands(bandsRef.current);
+      requestRef.current = requestAnimationFrame(animateUI);
     }
-    progressRef.current = requestAnimationFrame(updateProgress);
-  }, [isPlaying, isDragging, duration]);
+  }, [isOmniMode, isPlaying]);
 
+  // Listen to worker ticks
   useEffect(() => {
-    progressRef.current = requestAnimationFrame(updateProgress);
-    return () => cancelAnimationFrame(progressRef.current);
-  }, [updateProgress]);
+    if (!workerRef.current) return;
 
+    workerRef.current.onmessage = (e) => {
+      if (e.data === 'tick') {
+        updatePhysics();
+      }
+    };
+  }, [updatePhysics]);
+
+  // Control Worker and UI Loop
   useEffect(() => {
     if (isOmniMode && isPlaying) {
-      startTimeRef.current = Date.now();
-      requestRef.current = requestAnimationFrame(animate);
+      // Start loops
+      startTimeRef.current = Date.now(); // Reset or sync time? Actually strictly tracking delta is better but this works for phase
+      workerRef.current?.postMessage('start');
+      requestRef.current = requestAnimationFrame(animateUI);
     } else {
+      // Stop loops
+      workerRef.current?.postMessage('stop');
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     }
-  }, [isOmniMode, isPlaying, animate]);
+  }, [isOmniMode, isPlaying, animateUI]);
 
   const startPlayback = async (offset: number) => {
     if (audioBufferRef.current && audioEngineRef.current) {
