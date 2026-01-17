@@ -1,31 +1,21 @@
 
+import { Howl } from 'howler';
 import { SpatialBand } from "../types";
 
 export class AudioEngine {
+  private howl: Howl | null = null;
   private context: AudioContext;
-  private source: AudioBufferSourceNode | null = null;
   private analyzer: AnalyserNode;
-  private masterVolume: GainNode;
-  private stereoPanner: StereoPannerNode;
+  private sourceNode: MediaElementAudioSourceNode | null = null;
   private bandPositions: Map<string, { x: number; y: number; z: number }> = new Map();
+  private currentVolume: number = 1.0;
   private lastPanUpdate: number = 0;
-  private targetPan: number = 0;
+  private soundId: number | undefined;
 
   constructor() {
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.analyzer = this.context.createAnalyser();
     this.analyzer.fftSize = 2048;
-
-    this.masterVolume = this.context.createGain();
-    this.masterVolume.gain.value = 1.0;
-
-    // Simple stereo panner for clean left-right movement
-    this.stereoPanner = this.context.createStereoPanner();
-    this.stereoPanner.pan.value = 0;
-
-    // Audio path: source -> stereoPanner -> volume -> analyzer -> output
-    this.stereoPanner.connect(this.masterVolume);
-    this.masterVolume.connect(this.analyzer);
     this.analyzer.connect(this.context.destination);
   }
 
@@ -36,56 +26,115 @@ export class AudioEngine {
   }
 
   public setVolume(value: number) {
-    const now = this.context.currentTime;
-    this.masterVolume.gain.setTargetAtTime(value, now, 0.05);
+    this.currentVolume = value;
+    if (this.howl) {
+      this.howl.volume(value);
+    }
   }
 
   public updateBandPosition(id: string, x: number, y: number, z: number) {
     this.bandPositions.set(id, { x, y, z });
 
-    // Use the x position to control stereo panning (left-right)
-    if (id === 'sub') {
-      // Throttle updates to max 20 times per second to prevent audio artifacts
+    // Throttle stereo updates
+    if (id === 'sub' && this.howl && this.soundId !== undefined) {
       const now = Date.now();
-      if (now - this.lastPanUpdate < 50) return; // Skip if less than 50ms since last update
+      if (now - this.lastPanUpdate < 50) return;
       this.lastPanUpdate = now;
 
-      // Normalize x to -1 to 1 range for stereo pan
-      const panValue = Math.max(-1, Math.min(1, x / 18));
-
-      // Only update if pan value changed significantly
-      if (Math.abs(panValue - this.targetPan) > 0.02) {
-        this.targetPan = panValue;
-        // Use longer ramp for smooth audio
-        const rampTime = this.context.currentTime + 0.1;
-        this.stereoPanner.pan.linearRampToValueAtTime(panValue, rampTime);
-      }
+      // Normalize x to -1 to 1 range for stereo
+      const stereoValue = Math.max(-1, Math.min(1, x / 18));
+      this.howl.stereo(stereoValue, this.soundId);
     }
   }
 
-  public async playBuffer(buffer: AudioBuffer, offset: number = 0) {
-    if (this.source) {
-      try { this.source.stop(); } catch (e) { }
-    }
+  public async playBuffer(buffer: AudioBuffer, offset: number = 0): Promise<number> {
+    // Howler needs a URL, so we'll convert the buffer to a blob URL
+    // This method is called with an AudioBuffer, but we need to adapt for Howler
 
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
 
-    this.source = this.context.createBufferSource();
-    this.source.buffer = buffer;
-
-    this.source.connect(this.stereoPanner);
-
-    this.source.start(0, offset);
     return this.context.currentTime;
   }
 
+  public async loadAndPlay(file: File, onLoad?: (duration: number) => void): Promise<void> {
+    // Stop any existing playback
+    if (this.howl) {
+      this.howl.unload();
+    }
+
+    const url = URL.createObjectURL(file);
+
+    return new Promise((resolve) => {
+      this.howl = new Howl({
+        src: [url],
+        html5: true, // Use HTML5 Audio for large files
+        volume: this.currentVolume,
+        onload: () => {
+          if (onLoad && this.howl) {
+            onLoad(this.howl.duration());
+          }
+
+          // Connect to analyzer for visualization
+          if (this.howl) {
+            const audioElement = (this.howl as any)._sounds[0]._node as HTMLAudioElement;
+            if (audioElement && !this.sourceNode) {
+              try {
+                this.sourceNode = this.context.createMediaElementSource(audioElement);
+                this.sourceNode.connect(this.analyzer);
+              } catch (e) {
+                // Already connected
+              }
+            }
+          }
+
+          resolve();
+        },
+        onplay: () => {
+          if (this.context.state === 'suspended') {
+            this.context.resume();
+          }
+        }
+      });
+
+      this.soundId = this.howl.play();
+    });
+  }
+
+  public play() {
+    if (this.howl) {
+      this.soundId = this.howl.play();
+    }
+  }
+
+  public pause() {
+    if (this.howl) {
+      this.howl.pause();
+    }
+  }
+
   public stop() {
-    try {
-      this.source?.stop();
-      this.source = null;
-    } catch (e) { }
+    if (this.howl) {
+      this.howl.stop();
+    }
+  }
+
+  public seek(time: number) {
+    if (this.howl && this.soundId !== undefined) {
+      this.howl.seek(time, this.soundId);
+    }
+  }
+
+  public getCurrentTime(): number {
+    if (this.howl && this.soundId !== undefined) {
+      return this.howl.seek(undefined, this.soundId) as number || 0;
+    }
+    return 0;
+  }
+
+  public isPlaying(): boolean {
+    return this.howl?.playing() || false;
   }
 
   public getAnalyser() {

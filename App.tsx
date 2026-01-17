@@ -73,14 +73,11 @@ const App: React.FC = () => {
 
   const updateProgress = useCallback(() => {
     if (isPlaying && !isDragging && audioEngineRef.current) {
-      const ctx = audioEngineRef.current.getContext();
-      const elapsed = ctx.currentTime - audioContextStartTimeRef.current;
-      const currentPos = playbackOffsetRef.current + elapsed;
+      const currentPos = audioEngineRef.current.getCurrentTime();
 
-      if (currentPos >= duration) {
+      if (currentPos >= duration && duration > 0) {
         setIsPlaying(false);
         setCurrentTime(duration);
-        audioEngineRef.current.stop();
       } else {
         setCurrentTime(currentPos);
       }
@@ -116,17 +113,11 @@ const App: React.FC = () => {
     if (!file || !audioEngineRef.current) return;
 
     setFileName(file.name);
+
+    // Read file for AI analysis
     const reader = new FileReader();
     reader.onload = async (e) => {
       const arrayBuffer = e.target?.result as ArrayBuffer;
-      const audioBuffer = await audioEngineRef.current!.getContext().decodeAudioData(arrayBuffer.slice(0));
-
-      audioBufferRef.current = audioBuffer;
-      setDuration(audioBuffer.duration);
-      setCurrentTime(0);
-
-      await startPlayback(0);
-      setIsOmniMode(true);
 
       setIsAnalyzing(true);
       try {
@@ -141,6 +132,17 @@ const App: React.FC = () => {
       }
     };
     reader.readAsArrayBuffer(file);
+
+    // Load and play with Howler
+    await audioEngineRef.current.loadAndPlay(file, (dur) => {
+      setDuration(dur);
+      setCurrentTime(0);
+    });
+
+    setIsPlaying(true);
+    setIsOmniMode(true);
+    audioContextStartTimeRef.current = audioEngineRef.current.getContext().currentTime;
+    playbackOffsetRef.current = 0;
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,9 +152,8 @@ const App: React.FC = () => {
 
   const handleSeekEnd = async () => {
     setIsDragging(false);
-    if (isPlaying) {
-      await startPlayback(currentTime);
-    } else {
+    if (audioEngineRef.current) {
+      audioEngineRef.current.seek(currentTime);
       playbackOffsetRef.current = currentTime;
     }
   };
@@ -195,12 +196,15 @@ const App: React.FC = () => {
   }, [isOmniMode]);
 
   const togglePlay = () => {
+    if (!audioEngineRef.current) return;
+
     if (isPlaying) {
-      audioEngineRef.current?.stop();
+      audioEngineRef.current.pause();
       setIsPlaying(false);
       playbackOffsetRef.current = currentTime;
-    } else if (audioBufferRef.current) {
-      startPlayback(playbackOffsetRef.current);
+    } else {
+      audioEngineRef.current.play();
+      setIsPlaying(true);
     }
   };
 
@@ -253,8 +257,8 @@ const App: React.FC = () => {
                     key={speed}
                     onClick={() => setRotationSpeed(speed)}
                     className={`w-7 h-7 flex items-center justify-center rounded-full text-[9px] font-bold transition-all border ${rotationSpeed === speed
-                        ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20'
-                        : 'bg-white/5 border-white/10 text-white/40 hover:text-white'
+                      ? 'bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20'
+                      : 'bg-white/5 border-white/10 text-white/40 hover:text-white'
                       }`}
                   >
                     {speed}
